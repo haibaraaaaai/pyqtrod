@@ -70,6 +70,7 @@ def compute_all_phi(path):
         try:
             f = NIfile(os.path.join(path, fn), ignore_correction=0)
             # f.a = [1, 1.2, 1, 1] only if ignore_correction=1
+
             stoptime = f.datasize / f.freq
             start = 0
             stop = stoptime

@@ -4,6 +4,34 @@ from scipy.interpolate import CubicSpline
 from scipy import stats
 
 
+def correct_on_speed_already_binned(bins, sy, N=300, fftfilter=1, mfilter=7, show=1):
+    if fftfilter:
+        rft = np.fft.rfft(sy)
+        rft[mfilter:] = 0  # Note, rft.shape = 21
+        sy = np.fft.irfft(rft)
+        if show:
+            plt.plot(bins, sy, label="Filtered signal")
+            plt.legend()
+            plt.xlabel("Phir (rad)")
+            plt.ylabel("Value")
+
+    fcor = np.cumsum(1 / sy)
+    fcor = np.insert(fcor, 0, 0)
+    fcor = fcor * bins[-1] / fcor[-1]
+    fcor = np.append(fcor, 2 * np.pi)
+    f = CubicSpline([0] + list(bins) + [2 * np.pi], fcor)
+
+    if show:
+        plt.figure()
+        plt.plot(
+            np.linspace(0, 2 * np.pi, N - 1), f(np.linspace(0, 2 * np.pi, N - 1)), ".-"
+        )
+        plt.xlabel("$\phi_{ori}$")
+        plt.ylabel("$\phi_{old}$")
+
+    return f
+
+
 def correct_on_speed_step(
     m, speeds, N=500, fftfilter=1, mfilter=7, show=1
 ):  # m is phir for each point, speed the value of speed

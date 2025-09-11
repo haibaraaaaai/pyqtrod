@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import minimize
 from functools import partial
 from scipy.stats import linregress
+from scipy.optimize import differential_evolution
 
 
 def Icor_matrix(a=0, b=0, c=0, d=0, inv=1):
@@ -178,3 +179,65 @@ def find_best_coeff(c0, c90, c45, c135):
     result = minimize(partial(best_coeff_func, ac=ac), [1, 1, 1])
 
     return result
+
+
+def radial_asymmetry_score(center, points, angles=None, k=3, band_width=0.05):
+    if angles is None:
+        angles = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+
+    center = np.asarray(center)
+    scores = []
+
+    for theta in angles:
+        # Direction vector (along the ray) and orthogonal (for the band)
+        direction = np.array([np.cos(theta), np.sin(theta)])
+        normal = np.array([-np.sin(theta), np.cos(theta)])
+
+        rel_points = points - center
+        projections_along = rel_points @ direction  # distance along direction
+        projections_orth = np.abs(
+            rel_points @ normal
+        )  # distance orthogonal to direction
+
+        # Select only points inside the strip (band)
+        mask = projections_orth < band_width
+        in_band = projections_along[mask]
+
+        # Separate positive and negative distances
+        pos = np.sort(in_band[in_band > 0])
+        neg = np.sort(
+            in_band[in_band < 0]
+        )  # croissant vers 0 (plus négatif = plus loin)
+
+        if len(pos) < k or len(neg) < k:
+            # scores.append(-1)  # pénalise direction mal échantillonnée
+            continue
+
+        d_pos = np.mean(pos[:k])
+        d_neg = np.mean(neg[-k:])  # les k plus proches de 0 dans le sens négatif
+
+        # Compute the gap
+        gap = d_pos - d_neg
+        scores.append(gap)
+    if len(scores) == 0:
+        return 1000
+
+    return -np.mean(scores)  # ou np.ptp(scores)
+
+
+def find_radial_center(points):
+    bounds = [(-0.5, 0.5), (-0.5, 0.5)]
+    result = differential_evolution(
+        lambda c: radial_asymmetry_score(c, points, k=3, band_width=0.05), bounds
+    )
+    return result.x
+
+
+def find_best_center_from_anisotropy(anisotropy_x, anisotropy_y):
+    """
+    Find the best center from the channels.
+    """
+
+    points = np.column_stack((anisotropy_x, anisotropy_y))
+    center = find_radial_center(points)
+    return center

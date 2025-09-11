@@ -20,7 +20,7 @@ reference_num_points = 200  # Number of points in the interpolated trajectory
 do_update_reference_cycle = (
     False  # Whether to update the reference line (for drift correction)
 )
-update_reference_cycle = (
+update_reference_cycle_size = (
     250000  # Number of points to process before updating the reference cycle
 )
 
@@ -36,7 +36,7 @@ first_cycle_detection_limit = 500000  # The script loks for maxima in the first 
 end_of_cycle_limit = 100000  # The script looks for the end of the cycle in the next 10000 points after the beginning of the cycle
 
 
-def smooth_trajectory(points):
+def smooth_trajectory(points, rnp=None, sth=None):
     """
     Smooth a closed 3D trajectory using cubic B-spline interpolation.
 
@@ -49,6 +49,10 @@ def smooth_trajectory(points):
         np.ndarray: Smoothed trajectory points
     """
     points = np.array(points)
+    if rnp is None:
+        rnp = reference_num_points
+    if sth is None:
+        sth = smoothing
 
     # Ensure the loop is closed (repeat first point at the end)
     if not np.allclose(points[0], points[-1]):
@@ -234,6 +238,92 @@ def update_reference_cycle(phase_indices, reference_cycle, trajectory):
     return new_traj
 
 
+def compute_reference_trace(
+    signals,
+    convolution_window,
+    reference_num_points,
+    smoothing,
+):
+    """
+    Compute the reference trace for phase assignment.
+
+    Args:
+        signals (np.ndarray): Input time series data
+        convolution_window (int): Window size for smoothing
+        reference_num_points (int): Number of points in the reference trace
+        output_path (str): Output path for saving results
+
+    Returns:
+        np.ndarray: Reference trace
+    """
+    # Apply convolution to smooth the signals
+    signals = np.apply_along_axis(
+        lambda m: np.convolve(
+            m, np.ones(convolution_window) / convolution_window, mode="valid"
+        ),
+        axis=0,
+        arr=signals,
+    )
+
+    # Perform PCA to reduce dimensionality
+    pca = PCA(n_components=4)
+    X_pca = pca.fit_transform(signals)
+
+    X_pca = X_pca[:, :3]
+
+    # Load or detect cycle indices
+
+    avg_signal_d = X_pca
+
+    # # Smooth the average signal
+    # M = len(avg_signal_d)
+    # nb_smooth = int(M / reference_num_points)
+    # print(f"nb_smooth: {nb_smooth}")
+    # avg_signal_d_av = np.zeros([M // nb_smooth, 3])
+    # for i in range(0, nb_smooth, 1):
+    #     avg_signal_d_av[i] = np.mean(
+    #         avg_signal_d[i * nb_smooth : i * nb_smooth + nb_smooth],
+    #         axis=0,
+    #     )
+    smooth_points = smooth_trajectory(
+        avg_signal_d, rnp=reference_num_points, sth=smoothing
+    )
+
+    return smooth_points, pca
+
+
+def unwrap_phase(
+    X_pca, smooth_points, update_reference_cycle, update_reference_cycle_size
+):
+    i = 0
+    phase0 = np.array([], dtype=np.int32)
+    prev_phase = 0
+
+    # Assign phase indices and update reference cycle if needed
+    if update_reference_cycle:
+        while i < X_pca.shape[0]:
+            phaseh = assign_phase_indices(
+                X_pca[i : i + update_reference_cycle_size],
+                smooth_points,
+                prev_phase=prev_phase,
+            )
+            smooth_points = update_reference_cycle(
+                phaseh,
+                smooth_points,
+                X_pca[i : i + update_reference_cycle_size],
+            )
+            i += update_reference_cycle_size
+            phase0 = np.concatenate((phase0, phaseh))
+            prev_phase = phaseh[-1]
+    else:
+        phase0 = assign_phase_indices(X_pca, smooth_points)
+
+    # Calculate phase angles
+    phase = phase0 / len(smooth_points) * 2 * np.pi
+    phase = np.unwrap(phase)
+    return phase0, phase
+
+
 def extract_phase(
     signals,
     output_path=None,
@@ -282,17 +372,17 @@ def extract_phase(
     print("smoothing")
 
     # Smooth the average signal
-    M = len(avg_signal_d)
-    avg_signal_d_av = np.zeros([M // reference_num_points, 3])
-    for i in range(0, M // reference_num_points, 1):
-        avg_signal_d_av[i] = np.mean(
-            avg_signal_d[
-                i * reference_num_points : i * reference_num_points
-                + reference_num_points
-            ],
-            axis=0,
-        )
-    smooth_points = smooth_trajectory(avg_signal_d_av)
+    # M = len(avg_signal_d)
+    # avg_signal_d_av = np.zeros([M // reference_num_points, 3])
+    # for i in range(0, M // reference_num_points, 1):
+    #     avg_signal_d_av[i] = np.mean(
+    #         avg_signal_d[
+    #             i * reference_num_points : i * reference_num_points
+    #             + reference_num_points
+    #         ],
+    #         axis=0,
+    #     )
+    smooth_points = smooth_trajectory(avg_signal_d)
 
     print("computing index")
     i = 0

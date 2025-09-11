@@ -100,11 +100,11 @@ class AnisTrajGL(QtWidgets.QWidget):
         print(self.start, self.stop)
 
         c0, c90, c45, c135 = self.NITab.NIf.ret_cor_channel(self.start, self.stop)
-
+        Itot = c0 + c90 + c45 + c135
         progress_callback.emit(30)
-
-        self.I0 = (c0 - c90) / (c0 + c90)
-        self.I1 = (c45 - c135) / (c45 + c135)
+        anisotropy_center = self.NITab.NIf.anisotropy_center
+        self.I0 = (c0 - c90) / Itot - anisotropy_center[0]
+        self.I1 = (c45 - c135) / Itot - anisotropy_center[1]
         self.samplesize = len(self.I0)
 
         progress_callback.emit(70)
@@ -144,7 +144,11 @@ class AnisTrajGL(QtWidgets.QWidget):
             self.stopbutton.setEnabled(False)
 
     def display_result(self):
+        self.big_point = gl.GLScatterPlotItem(
+            pos=np.array([[0, 0, 0]]), size=0.1, pxMode=False, color=mkColor("white")
+        )
         self.winpg, self.w = self.NITab.plot3D(title="3D plot - FKtraj")
+        self.w.addItem(self.big_point)
 
         self.v1 = np.column_stack((self.I0, self.I1, np.zeros(len(self.I0))))
 

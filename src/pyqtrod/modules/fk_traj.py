@@ -61,7 +61,7 @@ class FKtraj(QtWidgets.QWidget):
         self.npointsslider.setValue(self.npoints)
         self.stepslider.setValue(self.step)
 
-        self.maxlength = 1e6
+        self.maxlength = 1e7
 
         NITab.add_tool_widget(self, "FKtraj")
 

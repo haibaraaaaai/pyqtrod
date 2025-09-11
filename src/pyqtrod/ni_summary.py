@@ -1,52 +1,146 @@
 # This Python file uses the following encoding: utf-8
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets, uic
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter
 from functools import partial
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+from pyqtgraph import mkColor
+
+import numpy as np
 
 from importlib import import_module, reload
 import importlib.resources
 import inspect
 import importlib.resources as pkg_resources
 
+from .ni_correctionpanel import CorrectionPanel
+from .ni_phipanel import PhiPanel
 from .module_dialog import ModuleDialog
 from .matrix_dialog import MatrixDialog, MatrixChoose
 
 from pynavgui import PngPlotRegionGrid
 
-import numpy as np
 
 modules_root = "pyqtrod.modules"
 
 
-class NITab(QtWidgets.QMainWindow):
+class NISummary(QtWidgets.QMainWindow):
     def __init__(self, NIf, threadpool, png_instance=None):
-        super(NITab, self).__init__()
+        super(NISummary, self).__init__()
         self.NIf = NIf
         self.png_instance = png_instance
         self.threadpool = threadpool
-        with pkg_resources.path("pyqtrod", "ni_tab.ui") as ui_path:
+        with pkg_resources.path("pyqtrod", "ni_summary.ui") as ui_path:
             uic.loadUi(ui_path, self)
-        # self.choose_matrix_menu()
+        self.create_main_widget()
         self.init_plot_main()
 
         self.set_file_properties()
-        self.pols = [self.pol0, self.pol1, self.pol2, self.pol3]
         self.decimatebox.setCurrentText(str(self.NIf.dec))
         self.set_pol_decim_buttons()
-        self.init_pol_from_NIf_default()
         self.init_load_as_seen()
-        self.setslider()
+        self.display_anisotropy()
+        self.display_trajectory()
+        # self.setslider()
         self.n_modules = 0
-        self.set_coeffs_buttons()
+        # self.set_coeffs_buttons()
         self.toolmodules = []
 
         self.imported_modules = []
-        # Install event filter
+        # # Install event filter
         self.installEventFilter(self)
         self.set_memory_text()
-        self.load_all_modules()
+        # self.load_all_modules()
+        self.phi_plot = None
+
+    def create_main_widget(self):
+        self.main_layout = QHBoxLayout(self.main_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Top panel
+        self.plot_widget = PngPlotRegionGrid(png_instance=self.png_instance)
+        self.main_layout.addWidget(self.plot_widget)
+
+        # Bottom container with two GL views
+        self.right_widget = QWidget()
+        self.right_layout = QVBoxLayout(self.right_widget)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.anisotropy_gl = gl.GLViewWidget()
+        self.anisotropy_gl.setBackgroundColor("k")
+        self.anisotropy_gl.setWindowTitle("3D plot - Anisotropy")
+        self.anisotropy_gl.setCameraPosition(distance=40)
+
+        self.trajectory_gl = gl.GLViewWidget()
+        self.trajectory_gl.setBackgroundColor("k")
+
+        # Add to layout
+        self.right_layout.addWidget(self.anisotropy_gl)
+        self.right_layout.addWidget(self.trajectory_gl)
+
+        total_width = self.main_widget.width()
+        total_height = self.main_widget.height()
+        widget_width = min(total_height // 2, total_width // 3)
+        self.right_widget.setFixedWidth(widget_width)
+        self.right_widget.setFixedHeight(2 * widget_width)
+
+        # Add right container to main layout
+        self.main_layout.addWidget(self.right_widget)
+
+    def display_anisotropy(self):
+
+        c0, c90, c45, c135 = self.NIf.ret_cor_channel()
+        Itot = c0 + c90 + c45 + c135
+        I0 = (c0 - c90) / Itot - self.NIf.anisotropy_center[0]
+        I1 = (c45 - c135) / Itot - self.NIf.anisotropy_center[1]
+
+        self.v1 = np.column_stack((I0, I1, np.zeros(len(I0))))
+
+        plt = gl.GLScatterPlotItem(
+            pos=self.v1, size=0.01, pxMode=False, color=mkColor("red")
+        )
+        big_point = gl.GLScatterPlotItem(
+            pos=np.array([[0, 0, 0]]), size=0.1, pxMode=False, color=mkColor("white")
+        )
+        plt.setGLOptions("translucent")
+        self.anisotropy_gl.clear()
+        self.anisotropy_gl.addItem(plt)
+        self.anisotropy_gl.addItem(big_point)
+        self.anisotropy_gl.show()
+
+    def display_trajectory(self):
+        (phi, theta1) = self.NIf.ret_all_var(phiraw=True)
+        v1 = np.column_stack(
+            (
+                np.sin(theta1) * np.cos(phi),
+                np.sin(theta1) * np.sin(phi),
+                np.cos(theta1),
+            )
+        )
+        # v2 = np.array([np.sin(theta0)*np.cos(phi0),np.sin(theta0)*np.sin(phi0),np.cos(theta0)])
+        # fac = v1.transpose().dot(v2)
+        # Itot = Itots2thet / np.sin(theta1)**2
+        v1[np.isnan(v1)] = 0
+        plt = gl.GLScatterPlotItem(
+            pos=v1, size=0.01, pxMode=False, color=mkColor("red")
+        )
+        print(v1)
+        plt.setGLOptions("translucent")
+        self.trajectory_gl.clear()
+        self.trajectory_gl.addItem(plt)
+        self.trajectory_gl.show()
+
+    def resizeEvent(self, event):
+        self.update_gl_sizes()
+        return super().resizeEvent(event)
+
+    def update_gl_sizes(self):
+        total_width = self.main_widget.width()
+        total_height = self.main_widget.height()
+        widget_width = min(total_height // 2, total_width // 3)
+        self.right_widget.setFixedWidth(widget_width)
+        self.right_widget.setFixedHeight(2 * widget_width)
 
     def load_all_modules(self):
         with importlib.resources.path(modules_root, "") as modules_path:
@@ -60,9 +154,11 @@ class NITab(QtWidgets.QMainWindow):
                 )
             ]
         fl2 = []
+        print("Modules found:", fl)
         for f in fl:
             if not f.endswith("beta.py"):
-                fl2.append(f)
+                if "anis_traj_gl" in f:
+                    fl2.append(f)
         for t in fl2:
             self.load_module(t)
 
@@ -87,6 +183,28 @@ class NITab(QtWidgets.QMainWindow):
             return
         for t in list_selected_modules:
             self.load_module(t)
+
+    def open_correction_dialog(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Correction des coefficients")
+        dialog.setModal(False)  # bloque l’interface tant qu’ouvert
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        panel = CorrectionPanel(nisummary_object=self, nif_object=self.NIf)
+        layout.addWidget(panel)
+
+        dialog.resize(400, 300)
+        dialog.exec()  # Ouvre le QDialog modale
+
+    def open_phi_dialog(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Phi correction")
+        dialog.setModal(False)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        panel = PhiPanel(nisummary_object=self, nif_object=self.NIf)
+        layout.addWidget(panel)
+        dialog.resize(400, 300)
+        dialog.exec()
 
     def edit_matrix_menu(self):
         dialog = MatrixDialog("Edit correction matrix", mat=self.NIf.matcor)
@@ -162,6 +280,9 @@ class NITab(QtWidgets.QMainWindow):
                 self.plotmain = self.plot(
                     self.NIf.xs,
                     self.NIf.data[i],
+                    xtitle="Time (s)",
+                    ytitle="APD Voltage (V)",
+                    plotname="APD signals",
                     no_quit=True,
                     name=f"""{self.NIf.channelnames[0]}
                     ({self.NIf.orientations[0]}°)""",
@@ -203,7 +324,7 @@ class NITab(QtWidgets.QMainWindow):
             if self.load_as_seen:
                 self.update_loaded_file()
         (a, b) = self.plotmain.viewRange()[0]
-        self.DataSlider.setValue((a, b))
+        # self.DataSlider.setValue((a, b))
 
     # def eventFilter(self, source, event):
     #     if event.type() == QtCore.QEvent.KeyRelease:
@@ -213,65 +334,6 @@ class NITab(QtWidgets.QMainWindow):
     #             if self.load_as_seen:
     #                 self.update_loaded_file()
     #     return super().eventFilter(source, event)
-
-    def set_coeffs_buttons(self):
-        self.abut = []
-        self.bbut = []
-
-        qg = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout()
-        qg.setLayout(layout)
-        for i in range(4):
-            label = QtWidgets.QLabel()
-            layout.addWidget(label)
-            label.setText(self.NIf.channelnames[i])
-
-            hw = QtWidgets.QWidget()
-            layout.addWidget(hw)
-
-            layout2 = QtWidgets.QHBoxLayout()
-            hw.setLayout(layout2)
-
-            label = QtWidgets.QLabel()
-            layout2.addWidget(label)
-            label.setText("a")
-
-            nb = QtWidgets.QDoubleSpinBox()
-            layout2.addWidget(nb)
-            nb.setValue(self.NIf.a[i])
-            nb.valueChanged.connect(partial(self.set_a, channel=i))
-            self.abut.append(nb)
-
-            label = QtWidgets.QLabel()
-            layout2.addWidget(label)
-            label.setText("b")
-
-            nb = QtWidgets.QDoubleSpinBox()
-            layout2.addWidget(nb)
-            nb.setValue(self.NIf.b[i])
-            nb.setMinimum(-3)
-            nb.valueChanged.connect(partial(self.set_b, channel=i))
-            self.bbut.append(nb)
-
-        button = QtWidgets.QPushButton("Save coefficient to file")
-        button.clicked.connect(self.NIf.save_coeff_to_file)
-        layout.addWidget(button)
-        self.toolBox_2.addItem(qg, "Corr coeffs")
-
-    def set_a(self, value, channel):
-        self.NIf.a[channel] = value
-        self.NIf.update_data_from_file(time=-2)
-        self.update_plot_main()
-
-    def set_b(self, value, channel):
-        self.NIf.b[channel] = value
-        self.NIf.update_data_from_file(time=-2)
-        self.update_plot_main()
-
-    def update_coeffs_buttons(self):
-        for i in range(4):
-            self.abut[i].setValue(self.NIf.a[i])
-            self.bbut[i].setValue(self.NIf.b[i])
 
     def set_file_properties(self):
         self.filepathdisplay.setText(self.NIf.path)
@@ -286,25 +348,22 @@ class NITab(QtWidgets.QMainWindow):
         self.lengthmindisplay.setText(
             "{:.2f}".format(self.NIf.datasize / self.NIf.freq / 60)
         )
-        self.labelchannel0.setText(self.NIf.channelnames[0])
-        self.labelchannel1.setText(self.NIf.channelnames[1])
-        self.labelchannel2.setText(self.NIf.channelnames[2])
-        self.labelchannel3.setText(self.NIf.channelnames[3])
+
         pass
 
     def set_pol_decim_buttons(self):
-        for i in range(4):
-            self.pols[i].currentTextChanged.connect(
-                partial(self.set_pol_channel, channel=i)
-            )
+
         self.start_load_in_mem.setValue(self.NIf.xminmem)
         self.stop_load_in_mem.setValue(self.NIf.xmaxmem)
         self.stop_load_in_mem.setMaximum(self.NIf.datasize / self.NIf.freq)
         self.stop_load_in_mem.valueChanged.connect(self.start_load_in_mem.setMaximum)
         self.start_load_in_mem.setMaximum(self.stop_load_in_mem.value())
         self.decimatebox.currentTextChanged.connect(lambda: self.indicate_loaded_size())
-        self.decimatebox.currentTextChanged.connect(self.NIf.set_dec)
-
+        self.decimatebox.currentTextChanged.connect(
+            lambda: self.update_loaded_file(force=True)
+        )
+        self.max_size.setValue(self.NIf.max_size)
+        self.max_size.valueChanged.connect(lambda: self.update_loaded_file(force=True))
         self.stop_load_in_mem.valueChanged.connect(lambda: self.indicate_loaded_size())
         self.start_load_in_mem.valueChanged.connect(lambda: self.indicate_loaded_size())
         self.decimation_averaged.setChecked(self.NIf.dec_average)
@@ -312,7 +371,7 @@ class NITab(QtWidgets.QMainWindow):
 
         self.button_load_as_seen.stateChanged.connect(self.set_load_as_seen)
 
-        self.DataSlider.setValue((self.NIf.xminmem, self.NIf.xmaxmem))
+        # self.DataSlider.setValue((self.NIf.xminmem, self.NIf.xmaxmem))
 
         self.loadinmem.clicked.connect(self.update_loaded_file)
 
@@ -351,7 +410,7 @@ class NITab(QtWidgets.QMainWindow):
             f"Corresponding to roughly {nb_points} points and {memory} MB of memory."
         )
 
-    def update_loaded_file(self):
+    def update_loaded_file(self, force=False):
         if self.load_as_seen is False:
             timestart = self.start_load_in_mem.value()
             timestop = self.stop_load_in_mem.value()
@@ -361,16 +420,41 @@ class NITab(QtWidgets.QMainWindow):
                 timestart=timestart,
                 timestop=timestop,
             )
-            self.DataSlider.setValue((self.NIf.xminmem, self.NIf.xmaxmem))
+            # self.DataSlider.setValue((self.NIf.xminmem, self.NIf.xmaxmem))
             self.update_plot_main()
         else:
             (a, b) = self.plotmain.viewRange()[0]
-            self.DataSlider.setValue((a, b))
-            if (b > self.NIf.xmaxmem) or (a < self.NIf.xminmem):
-                self.NIf.update_data_from_file(time=0.5 * a + 0.5 * b)
+            # self.DataSlider.setValue((a, b))
+            dec = int(self.decimatebox.currentText())
+            center = 0.5 * a + 0.5 * b
+            memintime = self.max_size.value() / self.NIf.freq * dec
+            max_size = int(self.max_size.value())
+
+            if self.NIf.dec != dec:
+                self.NIf.init_data_share(
+                    dec,
+                    timestart=center - memintime,
+                    timestop=center + memintime,
+                )
                 self.update_plot_main()
-            (a, b) = self.plotmain.viewRange()[0]
-            self.DataSlider.setValue((a, b))
+            if max_size != self.NIf.max_size:
+                self.NIf.max_size = max_size
+                self.NIf.init_data_share(
+                    dec,
+                    timestart=center - memintime,
+                    timestop=center + memintime,
+                )
+                self.update_plot_main()
+
+            else:
+                if force or (b > self.NIf.xmaxmem) or (a < self.NIf.xminmem):
+                    self.NIf.update_data_from_file(time=0.5 * a + 0.5 * b)
+                    self.update_plot_main()
+                (a, b) = self.plotmain.viewRange()[0]
+            # self.DataSlider.setValue((a, b))
+        self.display_anisotropy()
+        self.display_trajectory()
+
         self.set_memory_text()
 
     def set_memory_text(self):
@@ -394,62 +478,63 @@ class NITab(QtWidgets.QMainWindow):
         return
         self.plotmain.setXRange(value[0], value[1])
 
-    def init_pol_from_NIf_default(self):
-        for i in range(4):
-            self.pols[i].setCurrentText(self.NIf.orientations[i])
-
-    def set_pol_channel(self, string, channel):
-        current_strings = []
-        p = ["0", "45", "90", "135"]
-        str_to_change = string
-        for i in range(4):
-            current_strings.append(str(self.pols[i].currentText()))
-        for i in range(4):
-            if current_strings.count(p[i]) == 2:
-                str_to_change = p[i]
-            if current_strings.count(p[i]) == 0:
-                new_value = p[i]
-
-        for i in range(4):
-            if i != channel:
-                if current_strings[i] == str_to_change:
-                    self.pols[i].setCurrentText(new_value)
-        self.NIf.orientations[channel] = string
-
     def get_current_active_widget(self):
         ac_subwindow = self.mdiArea.activeSubWindow()
         cw = ac_subwindow.widget()
         return cw
 
     def plot(self, x, y, title="", xtitle="", ytitle="", no_quit=False, **kwargs):
-        winpg = QtWidgets.QMdiSubWindow()
-        winpg.setWindowTitle(title)
-        self.mdiArea.addSubWindow(winpg)
-        w = PngPlotRegionGrid(title=title, png_instance=self.png_instance)
-        winpg.setWidget(w)
-        ph = w.addPlot(x=x, y=y, xtitle=xtitle, ytitle=ytitle, **kwargs)
-        if no_quit:
-            winpg.setWindowFlags(
-                QtCore.Qt.WindowType.CustomizeWindowHint
-                | QtCore.Qt.WindowType.WindowTitleHint
-                | QtCore.Qt.WindowType.WindowMinMaxButtonsHint
-                | QtCore.Qt.WindowType.SubWindow
-            )
-        winpg.show()
+
+        ph = self.plot_widget.addPlot(x=x, y=y, xtitle=xtitle, ytitle=ytitle, **kwargs)
+        self.plot_widget.show()
         return ph
 
-    def plot3D(self, title="", xtitle="", ytitle=""):
-        winpg = QtWidgets.QMdiSubWindow()
-        winpg.setWindowTitle(title)
-        self.mdiArea.addSubWindow(winpg)
-        w = gl.GLViewWidget()
-        w.setBackgroundColor("k")
-        w.setWindowTitle(title)
-        w.setCameraPosition(distance=40)
-        winpg.setWidget(w)
-        winpg.show()
-        winpg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-        return winpg, w
+    def plot_phi_anisotropy(
+        self,
+        start=0,
+        stop=None,
+        cutwindow=1000000,
+        average_before=0,
+        average_before_window=1,
+        average_before_dec=1,
+    ):
+        if self.plotmain is None:
+            return
+        if self.phi_plot is None:
+            plotregion = self.plotmain.parentplotregion
+            self.phi_plot = plotregion.add_plot(
+                plotname="Phi", xtitle="Time (s)", ytitle="Phi (degrees)"
+            )
+        olddec = self.NIf.dec
+        self.NIf.dec = 1
+        self.phi = self.NIf.ret_phi(
+            start,
+            stop,
+            raw=1,
+            init=1,
+            cutwindow=cutwindow,
+            force_ref=0,
+            average_before=average_before,
+            average_before_window=average_before_window,
+            average_before_dec=average_before_dec,
+            no_anisotropy=False,
+        )
+        self.NIf.dec = olddec
+
+        self.xs = (
+            start / self.NIf.freq
+            + np.arange(len(self.phi)) / self.NIf.freq * average_before_dec
+        )
+        self.phi_plot.clear()
+        self.phi_plot.add_ds(
+            self.xs,
+            self.phi * 180 / np.pi,
+            name="Phi",
+        )
+        return
+
+    def save_phi_to_file(self, output_file):
+        np.save(output_file, np.array([self.xs, self.phi]))
 
     def plot3D2D(self, title="", xtitle="", ytitle=""):
         winpg = QtWidgets.QMdiSubWindow()

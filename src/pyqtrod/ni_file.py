@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 from nptdms import TdmsFile
-from .helpers.corr_matrix import T_Icor_Matrix, find_best_coeff_using_mat
+from .helpers.corr_matrix import (
+    T_Icor_Matrix,
+    find_best_coeff_using_mat,
+    find_best_center_from_anisotropy,
+)
 from .helpers.fourkas import Fourkas, comp_phiu
 from .helpers.correction_linearity import correct_on_diff, set_fcor_from_array
 import os
@@ -14,8 +18,8 @@ class NIfile:
     def __init__(
         self,
         path,
-        max_size=1000000000,
-        dec=1,
+        max_size=200000,
+        dec=50,
         rawoptics=0,
         decref=200,
         ignore_correction=0,
@@ -50,7 +54,7 @@ class NIfile:
             TdmsFile.close(self.path)
             raise ValueError("Problem loading file " + path)
         self.center = -1
-        self.dec_average = False
+        self.dec_average = 1
         self.a = [1, 1.2, 1, 1]
         self.b = [0, 0, 0, 0]
 
@@ -63,8 +67,13 @@ class NIfile:
 
         self.init_data_share(dec)
 
-        if not ignore_correction:
-            self.correct_channels(1000, 100000)
+        found_coeff = self.load_coeff_from_file()
+        self.load_anisotropy_from_file()
+
+        if not ignore_correction and not found_coeff:
+            self.auto_calculate_coeffs_from_visible()
+            self.save_coeff_to_file()
+
         self.init_phi_ref(decref)
 
     # The functions in this section do not depend on data share function and
@@ -114,19 +123,83 @@ class NIfile:
 
     def set_dec(self, value):
         dec = int(value)
-        if dec in [1, 2, 5, 10, 20, 50, 100]:
+        old_dec = self.dec
+        if dec in [1, 2, 5, 10, 20, 50, 100, 200]:
             self.dec = dec
+        if old_dec != self.dec:
+            self.init_data_share(dec=self.dec)
 
     def save_coeff_to_file(self):
         np.save(self.path[:-5] + "_chcor.npy", self.a)
         print("Channel corrections SAVED TO file")
 
-    def correct_channels(self, start, stop, force=False):  # No decimation or data share
+    def save_anisotropy_to_file(self):
+        """
+        Save the anisotropy center to file
+        """
+        np.save(self.path[:-5] + "_anisotropy_center.npy", self.anisotropy_center)
+        print("Anisotropy center SAVED TO file")
+
+    def load_coeff_from_file(self):
+        """
+        Load the channel corrections from file
+        """
+        if os.path.isfile(self.path[:-5] + "_chcor.npy"):
+            self.a = np.load(self.path[:-5] + "_chcor.npy")
+            print("Channel corrections loaded FROM file")
+            return True
+        else:
+            print("No channel corrections file found, using default values")
+            self.a = [1, 1.2, 1, 1]
+            return False
+
+    def load_anisotropy_from_file(self):
+        """
+        Load the anisotropy center from file
+        """
+        if os.path.isfile(self.path[:-5] + "_anisotropy_center.npy"):
+            self.anisotropy_center = np.load(self.path[:-5] + "_anisotropy_center.npy")
+            print("Anisotropy center loaded FROM file")
+            return True
+        else:
+            print("No anisotropy center file found, using default values")
+            self.anisotropy_center = [0, 0]
+            return False
+
+    def auto_calculate_coeffs_from_visible(self):
+        """
+        Automatically calculate the coefficients a and b from the visible data
+        """
+        self.correct_channels(self.iminmem, self.imaxmem, dec=self.dec, force=True)
+        print("Channel corrections recalculated from visible data")
+
+    def auto_calculate_anisotropy_from_visible(self):
+        """
+        Automatically calculate the anisotropy center from the visible data
+        """
+        c0, c90, c45, c135 = self.ret_cor_channel()
+        Itot = c0 + c90 + c45 + c135
+        anistropy_x = (c0 - c90) / Itot
+        anistropy_y = (c45 - c135) / Itot
+        self.anisotropy_center = find_best_center_from_anisotropy(
+            anistropy_x, anistropy_y
+        )
+        print("Anisotropy center recalculated from visible data")
+
+    def correct_channels(
+        self, start, stop, dec=1, force=False
+    ):  # No decimation or data share
         """
         Correct the channels using the matrix matcorb
         It directly reads the data from the file
         """
         c0, c90, c45, c135 = self.ret_raw_channels(start, stop)
+        if dec > 1:
+            dec = int(dec)
+            c0 = c0[::dec]
+            c90 = c90[::dec]
+            c45 = c45[::dec]
+            c135 = c135[::dec]
         if os.path.isfile(self.path[:-5] + "_chcor.npy") and not force:
             arf = np.load(self.path[:-5] + "_chcor.npy")
             self.a = arf
@@ -141,6 +214,7 @@ class NIfile:
             self.a[self.ret_index_by_pol("90")] = l90
             self.a[self.ret_index_by_pol("45")] = l45
             self.a[self.ret_index_by_pol("135")] = l135
+            self.a[self.ret_index_by_pol("0")] = 1.0
             self.save_coeff_to_file()
 
         self.update_data_from_file(time=-2)
@@ -205,14 +279,17 @@ class NIfile:
             data[index[3], :],
         )
 
-    def ret_cor_channel(self, start, stop, ordl=["0", "90", "45", "135"]):
+    def ret_cor_channel(self, start=0, stop=-1, ordl=["0", "90", "45", "135"]):
         """
         Correct the channels using the matrix matcor
         and the corrections a and b
         It reads the data from the DATA SHARE
         """
-        stindex, stopindex = self.time_to_index_in_mem([start, stop])
-        data = self.data[:, stindex:stopindex]
+        if start == 0 and stop == -1:
+            data = self.data
+        else:
+            stindex, stopindex = self.time_to_index_in_mem([start, stop])
+            data = self.data[:, stindex:stopindex]
         index = self.get_pol_ind(ordl)
         return (
             data[index[0], :],
@@ -274,12 +351,17 @@ class NIfile:
         average_before=False,
         average_before_window=100,
         average_before_dec=1,
+        no_anisotropy=False,
     ):
         """
         Reads the unwrapped phase from the file
+        Use anistropy to compute phi
         Uses matrix matcor to correct the channels and correction a and b
         Corrected for linearity if raw=0
         """
+        anisotropy_center = self.anisotropy_center
+        if no_anisotropy:
+            anisotropy_center = [0, 0]
         if cutwindow is not None:
             phiu = np.empty([])
             windowrange = np.arange(start, stop, cutwindow).astype("int")
@@ -291,8 +373,11 @@ class NIfile:
                     average_window=average_before_window,
                     dec=average_before_dec if average_before else None,
                 )
+                Itot = c0 + c90 + c45 + c135
+                anistropy_x = (c0 - c90) / Itot - anisotropy_center[0]
+                anistropy_y = (c45 - c135) / Itot - anisotropy_center[1]
+                phiu = np.hstack((phiu, comp_phiu(anistropy_x, anistropy_y)))
 
-                phiu = np.hstack((phiu, comp_phiu(c0, c90, c45, c135)))
         else:
             c0, c90, c45, c135 = self.ret_cor_channel_in_file(
                 start,
@@ -301,7 +386,10 @@ class NIfile:
                 average_window=average_before_window,
                 dec=average_before_dec if average_before else None,
             )
-            phiu = comp_phiu(c0, c90, c45, c135)
+            Itot = c0 + c90 + c45 + c135
+            anistropy_x = (c0 - c90) / Itot - anisotropy_center[0]
+            anistropy_y = (c45 - c135) / Itot - anisotropy_center[1]
+            phiu = comp_phiu(anistropy_x, anistropy_y)
 
         if (
             init == 0
@@ -321,7 +409,7 @@ class NIfile:
             phiu = np.unwrap(phir, period=np.pi)
         return phiu
 
-    def ret_all_var(self, start, stop, phiraw=0):
+    def ret_all_var(self, start=0, stop=-1, phiraw=0):
         """
         Return the unwrapped phase, the theta1
         Reads from loaded data
@@ -417,10 +505,10 @@ class NIfile:
         self,
         dec,
         timestart=0.0,
-        timestop=10.0,
+        timestop=100.0,
     ):  # called at the beginning or when change dec
         self.dec = 1
-        if dec in [1, 2, 5, 10, 20, 50, 100]:
+        if dec in [1, 2, 5, 10, 20, 50, 100, 200]:
             self.dec = dec
         else:
             raise ValueError("Bad decimation value")

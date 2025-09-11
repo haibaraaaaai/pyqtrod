@@ -44,6 +44,8 @@
         "src/pyqtrod/modules/freq_wavelet.py",
         "src/pyqtrod/modules/traj_corr__.py",
         "src/pyqtrod/modules/traj_corr__.ui",
-        "src/pyqtrod/modules/freq_wavelet.ui"
+        "src/pyqtrod/modules/freq_wavelet.ui",
+        "src/pyqtrod/modules/unwrap_phase.ui",
+        "src/pyqtrod/ni_summary.ui"
     ]
 }

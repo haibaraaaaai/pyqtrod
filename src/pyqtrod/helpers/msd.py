@@ -42,8 +42,8 @@ def calculate_msd_statistics(trajectory, lags):
         np.array(msd_5th_percentile),
         np.array(msd_95th_percentile),
         np.array(length),
+        
     )
-
 
 def calculate_ssd(trajectory, lags):
     ssd = []
@@ -51,7 +51,6 @@ def calculate_ssd(trajectory, lags):
         displacement_squared = (trajectory[t:] - trajectory[:-t]) ** 2
         ssd.append(np.std(displacement_squared))
     return np.array(ssd)
-
 
 def draw_msd_partial(
     zo,

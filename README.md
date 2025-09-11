@@ -3,9 +3,8 @@
 Software for visualization and analysis of rod data
 
 
-## Clone the GIT directory
+## Install with pip from the Git directory
 
-Create an account on Gitlab physics just by connecting once to [Gitlab Physics](https://gitlab.physics.ox.ac.uk/) with your Physics credential.
 
 Install [Git for windows](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
 
@@ -13,29 +12,64 @@ Clone the repository from the command line.
 
 ```
 cd where_you_want_to_put_the_software
-git clone https://gitlab.physics.ox.ac.uk/rieu/PyQtRod.git
+pip install git+https://github.com/Mriv31/pyqtrod.git
 ```
 
-You will be asked to enter your physics credential. If there are any access problem, ask me and I will add permission for you to clone.
+or form a virtual environnement :
+Linux :
 
-## Update the GIT directory
+```
+python -m venv pyqtrod_venv
+source pyqtrod_venv/bin/activate  
+```
+
+Windows :
+
+
+```
+python -m venv pyqtrod_venv
+.\testenv\Scripts\activate
+```
+
+Once in the virtual environnement just execute 
+
+```
+pyqtrod
+```
+
+### Update after new commits : 
+
+```
+pip install --no-cache-dir --force-reinstall git+https://github.com/Mriv31/pyqtrod
+pip install --no-cache-dir --force-reinstall git+https://github.com/Mriv31/pynavgui
+
+```
+If needed, reinstall requirements
+```
+pip install --no-cache-dir --force-reinstall -r requirements.txt
+```
+
+## Install to be modified locally 
+
+
+```
+cd where_you_want_to_put_the_software
+git clone git+https://github.com/Mriv31/pyqtrod
+```
+
+Yo will be asked to enter your physics credential. If there are any access problem, ask me and I will add permission for you to clone.
+
+### Update the GIT directory
 
 To update any modification I will have made to the software, just enter from the command line :
 
 ```
-cd where_you_want_to_put_the_software/PyQtRod
+cd where_you_want_to_put_the_software/pyqtrod
 git pull
 ```
 
-## Install Python
 
-To run the software you will need a Python environment. Check what is available on physics self service or install Python 3.10 for windows. (https://docs.python.org/3/using/windows.html).
-
-You can either install directly from Microsoft Store or the full installer on the [Python foundation](https://www.python.org/downloads/).
-
-I recommend not to use the Anaconda environment](https://docs.anaconda.com/anaconda/install/windows/), since most recent modules will be harder to install.
-
-## Install Python modules
+### Install Python modules
 
 Note : if in this part, in Windows, you get an error saying that windows can not find pip or python you need to add the Python path in your environment variables.
 
@@ -47,15 +81,16 @@ pip install --upgrade pip
 Several Python modules are needed to run the software. To do so open a command line console and enter :
 
 ```
-cd where_you_want_to_put_the_software/PyQtRod
+cd where_you_want_to_put_the_software/pyqtrod
 pip install -r requirements.txt
+pip install -e pyqtrod
 ```
+The ```-e``` flag allows you performing installing from the local folder instead of ding a copy and is thus needed for dev.
 
 ## Run PyQtRod
 
 ```
-cd where_you_want_to_put_the_software/PyQtRod
-python3 PyQtRod.py
+pyqtrod
 ```
 
 ## Load TDMS files

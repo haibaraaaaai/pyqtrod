@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from .ni_file import NIfile
 from .ni_tab import NITab
+from .ni_summary import NISummary
 from .plot_tab import PlotTab
 from pynavgui import PngPlotRegionMenu
 from pynavgui import PngInstance
@@ -16,6 +17,7 @@ from .helpers.batch_analysis import (
     compute_all_speeds,
 )
 import os
+import re
 
 QT_API = "pyqt6"
 
@@ -41,7 +43,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if path == ("", ""):
             return
         NIf = NIfile(path[0])
-        newtab = NITab(NIf, self.threadpool, png_instance=self.png_instance)
+        newtab = NISummary(NIf, self.threadpool, png_instance=self.png_instance)
+
         self.FileTab.addTab(newtab, path[0])
         self.FileTab.setCurrentWidget(newtab)
 
@@ -125,6 +128,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         file_list = os.listdir(path)
         file_list_to_open = []
+
+        def sort_key(filename):
+            match = re.match(r"([^\d]+)(\d+)\.tdms$", filename)
+            if match:
+                prefix, number = match.groups()
+                return (prefix, int(number))
+            else:
+                return (filename, 0)
+
         for f in file_list:
             print(f)
             if f.endswith("phiu.npy"):

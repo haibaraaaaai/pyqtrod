@@ -2,8 +2,8 @@
 import numpy as np
 
 
-def comp_phiu(c0, c90, c45, c135):
-    phi = 0.5 * np.arctan2((c45 / 2 - c135 / 2), (c0 / 2 - c90 / 2))
+def comp_phiu(anistropy_x, anistropy_y):
+    phi = 0.5 * np.arctan2(anistropy_y, anistropy_x)
     return np.unwrap(phi, period=np.pi)
 
 
