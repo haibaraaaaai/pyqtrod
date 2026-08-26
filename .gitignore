@@ -66,6 +66,10 @@ CMakeLists.txt.user*
 
 # Python byte code
 *.pyc
+__pycache__/
+
+# Virtual environments
+.venv/
 
 # Binaries
 # --------
